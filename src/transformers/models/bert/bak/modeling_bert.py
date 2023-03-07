@@ -50,7 +50,7 @@ from ...utils import (
     replace_return_docstrings,
 )
 from .configuration_bert import BertConfig
-from ..layer_history import CreateLayerHistory
+
 
 logger = logging.get_logger(__name__)
 
@@ -558,16 +558,6 @@ class BertEncoder(nn.Module):
         self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
         self.gradient_checkpointing = False
 
-        # create encoder layer history
-        self.history = CreateLayerHistory(config.num_hidden_layers, config.hidden_size, False)
-        
-        self.calculate_num = 2
-        self.enc_learnable_type = 'base'
-        self.rk_norm = False
-        
-        self.RK_norm = nn.ModuleList(nn.LayerNorm(config.hidden_size) for _ in range(self.calculate_num)) if self.rk_norm else None
-        self.residual_norm = nn.ModuleList(nn.LayerNorm(config.hidden_size) for _ in range(config.num_hidden_layers)) if self.rk_norm else None
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -586,10 +576,6 @@ class BertEncoder(nn.Module):
         all_cross_attentions = () if output_attentions and self.config.add_cross_attention else None
 
         next_decoder_cache = () if use_cache else None
-
-        self.history.clean()
-        self.history.add(hidden_states)
-
         for i, layer_module in enumerate(self.layer):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
@@ -619,72 +605,23 @@ class BertEncoder(nn.Module):
                     encoder_attention_mask,
                 )
             else:
-                self.history.pop()
-                runge_kutta_list = []
-                if self.rk_norm:
-                    residual = self.residual_norm[i](hidden_states)
-                else:
-                    residual = hidden_states
+                layer_outputs = layer_module(
+                    hidden_states,
+                    attention_mask,
+                    layer_head_mask,
+                    encoder_hidden_states,
+                    encoder_attention_mask,
+                    past_key_value,
+                    output_attentions,
+                )
 
-                # we use the RK2 or RK4 methods as the predictor to generate a rouge prediction
-
-                for j in range(self.calculate_num):
-
-                    layer_outputs = layer_module(
-                        hidden_states,
-                        attention_mask,
-                        layer_head_mask,
-                        encoder_hidden_states,
-                        encoder_attention_mask,
-                        past_key_value,
-                        output_attentions,
-                    )
-
-                    hidden_states = layer_outputs[0]
-
-                    if self.rk_norm:
-                        hidden_states = self.RK_norm[j](hidden_states)
-                    runge_kutta_list.append(hidden_states)
-                    
-                    
-                    # to construct the order-input for the next step computation
-                    if self.calculate_num == 4:
-                        if j == 0 or j == 1:
-                            hidden_states = residual + 1 / 2 * hidden_states
-                        elif j == 2:
-                            hidden_states = residual + hidden_states
-                    elif self.calculate_num == 2:
-                        hidden_states = residual + hidden_states
-                
-                if self.calculate_num == 4:
-                    if self.enc_learnable_type == 'ema':
-                        hidden_states = residual + self.alpha * torch.pow(1-self.alpha,3) * runge_kutta_list[0] + self.alpha * torch.pow(1-self.alpha,2) * runge_kutta_list[1] + self.alpha * (1-self.alpha) * runge_kutta_list[2] + self.alpha * runge_kutta_list[3]
-                    else:
-                        hidden_states = residual + 1 / 6 * (runge_kutta_list[0] + 2 * runge_kutta_list[1] + 2 * runge_kutta_list[2] + runge_kutta_list[3])
-                elif self.calculate_num == 2:
-                    if self.enc_learnable_type == 'gated':
-                        alpha = torch.sigmoid(self.gate_linear(torch.cat((runge_kutta_list[0], runge_kutta_list[1]), dim=-1)))
-                        hidden_states = residual + alpha * runge_kutta_list[0] + (1 - alpha) * runge_kutta_list[1]
-                    elif self.enc_learnable_type == 'ema':
-                        hidden_states = residual + self.alpha*(1-self.alpha) * runge_kutta_list[0] + self.alpha*runge_kutta_list[1]
-                    else:
-                        hidden_states = residual + 1/2 * (runge_kutta_list[0] + runge_kutta_list[1])
-                else:
-                    raise ValueError("invalid caculate num！")
-                
-                
-                self.history.add(hidden_states)
-
-
-
+            hidden_states = layer_outputs[0]
             if use_cache:
                 next_decoder_cache += (layer_outputs[-1],)
             if output_attentions:
                 all_self_attentions = all_self_attentions + (layer_outputs[1],)
                 if self.config.add_cross_attention:
                     all_cross_attentions = all_cross_attentions + (layer_outputs[2],)
-
-        hidden_states = self.history.pop()
 
         if output_hidden_states:
             all_hidden_states = all_hidden_states + (hidden_states,)
