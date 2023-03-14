@@ -559,14 +559,22 @@ class BertEncoder(nn.Module):
         self.gradient_checkpointing = False
 
         # create encoder layer history
-        self.history = CreateLayerHistory(config.num_hidden_layers, config.hidden_size, False)
+        # self.history = CreateLayerHistory(config.num_hidden_layers, config.hidden_size, False)
         
         self.calculate_num = 2
-        self.enc_learnable_type = 'base'
+        self.enc_learnable_type = 'ema'
         self.rk_norm = False
         
         self.RK_norm = nn.ModuleList(nn.LayerNorm(config.hidden_size) for _ in range(self.calculate_num)) if self.rk_norm else None
         self.residual_norm = nn.ModuleList(nn.LayerNorm(config.hidden_size) for _ in range(config.num_hidden_layers)) if self.rk_norm else None
+
+
+        if self.enc_learnable_type == 'gated':
+            self.gate_linear = nn.Linear(2 * config.hidden_size, 1)
+
+        elif self.enc_learnable_type == 'ema':
+            self.alpha = torch.nn.Parameter(torch.Tensor(1))
+            self.alpha.data.fill_(0.5)
 
     def forward(
         self,

@@ -5,7 +5,7 @@ LR=3e-5
 MAX_SENTENCES=32
 TASK=MRPC
 
-MODEL_DIR=roberta_large_LR${LR}_batch$MAX_SENTENCES
+MODEL_DIR=roberta_large_LR${LR}_batch$MAX_SENTENCES\_v1
 
 # --save_strategy no \
 CUDA_VISIBLE_DEVICES=0 python run_glue.py \

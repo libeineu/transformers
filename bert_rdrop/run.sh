@@ -1,11 +1,11 @@
 
 TOTAL_NUM_UPDATES=2296
 WARMUP_UPDATES=137
-LR=1e-5
-MAX_SENTENCES=16
+LR=2e-5
+MAX_SENTENCES=32
 TASK=MRPC
 
-MODEL_DIR=base_ode
+MODEL_DIR=../checkpoints/bert_base_LR${LR}_batch${MAX_SENTENCES}_ema_v2
 
 # --save_strategy no \
 CUDA_VISIBLE_DEVICES=0 python run_glue.py \
